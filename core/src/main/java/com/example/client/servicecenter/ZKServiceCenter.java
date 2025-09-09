@@ -16,67 +16,48 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArraySet;
 
-/**
- * @ClassName ZKServiceCenter
- * @Description 从服务中心获取服务地址
- */
 @Slf4j
 public class ZKServiceCenter implements ServiceCenter {
-    // curator 提供的zookeeper客户端
-    private CuratorFramework client;
-    //zookeeper根路径节点
     private static final String ROOT_PATH = "MyRPC";
     private static final String RETRY = "CanRetry";
-    //serviceCache
-    private ServiceCache cache;
+    private final CuratorFramework client;
+    private final ServiceCache cache;
+    private final LoadBalance loadBalance;
+    private final Set<String> retryServiceCache = new CopyOnWriteArraySet<>();
 
-    private final LoadBalance loadBalance = new ConsistencyHashBalance();
-
-    //负责zookeeper客户端的初始化，并与zookeeper服务端进行连接
     public ZKServiceCenter() throws InterruptedException {
-        // 指数时间重试
         RetryPolicy policy = new ExponentialBackoffRetry(1000, 3);
-        // zookeeper的地址固定，不管是服务提供者还是，消费者都要与之建立连接
-        // sessionTimeoutMs 与 zoo.cfg中的tickTime 有关系，
-        // zk还会根据minSessionTimeout与maxSessionTimeout两个参数重新调整最后的超时值。默认分别为tickTime 的2倍和20倍
-        // 使用心跳监听状态
-        this.client = CuratorFrameworkFactory.builder().connectString("127.0.0.1:2181")
-                .sessionTimeoutMs(40000).retryPolicy(policy).namespace(ROOT_PATH).build();
+        this.client = CuratorFrameworkFactory.builder()
+                .connectString("127.0.0.1:2181")
+                .sessionTimeoutMs(40000)
+                .retryPolicy(policy)
+                .namespace(ROOT_PATH)
+                .build();
         this.client.start();
         log.info("Zookeeper 连接成功");
-        //初始化本地缓存
-        cache = new ServiceCache();
-        //加入zookeeper事件监听器
-        watchZK watcher = new watchZK(client, cache);
-        //监听启动
+
+        this.cache = new ServiceCache();
+        this.loadBalance = new ConsistencyHashBalance();
+
+        watchZK watcher = new watchZK(client, cache, loadBalance);
         watcher.watchToUpdate(ROOT_PATH);
     }
 
-    //根据服务名（接口名）返回地址
     @Override
     public InetSocketAddress serviceDiscovery(RpcRequest request) {
         String serviceName = request.getInterfaceName();
         try {
-            //先从本地缓存中找
             List<String> addressList = cache.getServiceListFromCache(serviceName);
-            //如果找不到，再去zookeeper中找
-            //这种i情况基本不会发生，或者说只会出现在初始化阶段
+
             if (addressList == null) {
                 addressList = client.getChildren().forPath("/" + serviceName);
-                // 如果本地缓存中没有该服务名的地址列表，则添加
-                List<String> cachedAddresses = cache.getServiceListFromCache(serviceName);
-                if (cachedAddresses == null || cachedAddresses.isEmpty()) {
-                    // 假设 addServiceToCache 方法可以处理单个地址
-                    for (String address : addressList) {
-                        cache.addServiceToCache(serviceName, address);
-                    }
+                if (addressList.isEmpty()) {
+                    log.warn("未找到服务：{}", serviceName);
+                    return null;
                 }
+                updateLoadBalance(serviceName, addressList);
             }
-            if (addressList.isEmpty()) {
-                log.warn("未找到服务：{}", serviceName);
-                return null;
-            }
-            // 负载均衡得到地址
+
             String address = loadBalance.balance(addressList);
             return parseAddress(address);
         } catch (Exception e) {
@@ -84,15 +65,36 @@ public class ZKServiceCenter implements ServiceCenter {
         }
         return null;
     }
-    //保证线程安全使用CopyOnWriteArraySet
-    private Set<String> retryServiceCache = new CopyOnWriteArraySet<>();
-    //写一个白名单缓存，优化性能
+
+    private void updateLoadBalance(String serviceName, List<String> newAddressList) {
+        List<String> currentAddressList = cache.getServiceListFromCache(serviceName);
+
+        if (currentAddressList == null || currentAddressList.isEmpty()) {
+            for (String address : newAddressList) {
+                loadBalance.addNode(address);
+            }
+            return;
+        }
+
+        for (String newAddress : newAddressList) {
+            if (!currentAddressList.contains(newAddress)) {
+                loadBalance.addNode(newAddress);
+            }
+        }
+
+        for (String currentAddress : currentAddressList) {
+            if (!newAddressList.contains(currentAddress)) {
+                loadBalance.delNode(currentAddress);
+            }
+        }
+    }
+
     @Override
     public boolean checkRetry(InetSocketAddress serviceAddress, String methodSignature) {
         if (retryServiceCache.isEmpty()) {
-            try {
-                CuratorFramework rootClient = client.usingNamespace(RETRY);
-                List<String> retryableMethods = rootClient.getChildren().forPath("/" + getServiceAddress(serviceAddress));
+            try (CuratorFramework rootClient = client.usingNamespace(RETRY)) {
+                List<String> retryableMethods = rootClient.getChildren()
+                        .forPath("/" + getServiceAddress(serviceAddress));
                 retryServiceCache.addAll(retryableMethods);
             } catch (Exception e) {
                 log.error("检查重试失败，方法签名：{}", methodSignature, e);
@@ -101,17 +103,25 @@ public class ZKServiceCenter implements ServiceCenter {
         return retryServiceCache.contains(methodSignature);
     }
 
+    public void handleServiceFault(String serviceName, String faultAddress) {
+        try {
+            cache.delete(serviceName, faultAddress);
+            loadBalance.delNode(faultAddress);
+            log.info("服务节点故障处理完成：服务名 {}，故障节点 {}", serviceName, faultAddress);
+        } catch (Exception e) {
+            log.error("处理服务节点故障失败：服务名 {}，故障节点 {}", serviceName, faultAddress, e);
+        }
+    }
+
     @Override
     public void close() {
         client.close();
     }
 
-    // 将InetSocketAddress解析为格式为ip:port的字符串
-    private String getServiceAddress(InetSocketAddress serverAddress){
+    private String getServiceAddress(InetSocketAddress serverAddress) {
         return serverAddress.getHostName() + ":" + serverAddress.getPort();
     }
 
-    // 字符串解析为地址
     private InetSocketAddress parseAddress(String address) {
         String[] result = address.split(":");
         return new InetSocketAddress(result[0], Integer.parseInt(result[1]));
