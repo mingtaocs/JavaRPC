@@ -3,28 +3,28 @@ package common.serializer.myserializer;
 import com.esotericsoftware.kryo.Kryo;
 import com.esotericsoftware.kryo.io.Input;
 import com.esotericsoftware.kryo.io.Output;
-import com.example.pojo.User;
 import common.exception.SerializeException;
+import common.message.RpcRequest;
+import common.message.RpcResponse;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-
 
 /**
  * @ClassName KryoSerializer
  * @Description kryo序列化
  */
-
+@Slf4j
 public class KryoSerializer implements Serializer {
-    // Kryo实例，用于序列化和反序列化操作
-    private Kryo kryo;
-
-    /**
-     * 构造函数，初始化Kryo实例
-     */
-    public KryoSerializer() {
-        this.kryo = new Kryo();
-    }
+    // 使用ThreadLocal为每个线程维护独立的Kryo实例
+    private static final ThreadLocal<Kryo> kryoThreadLocal = ThreadLocal.withInitial(() -> {
+        Kryo kryo = new Kryo();
+        // 配置Kryo
+        kryo.setRegistrationRequired(false);
+        kryo.setReferences(true);
+        return kryo;
+    });
 
     /**
      * 序列化方法，将对象转换为字节数组
@@ -41,11 +41,10 @@ public class KryoSerializer implements Serializer {
 
         try (ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
              Output output = new Output(byteArrayOutputStream)) {
-
-            kryo.writeObject(output, obj); // 使用 Kryo 写入对象
-            return output.toBytes(); // 返回字节数组
-
+            kryoThreadLocal.get().writeObject(output, obj);
+            return output.toBytes();
         } catch (Exception e) {
+            log.error("Serialization failed for object: {}", obj.getClass().getName(), e);
             throw new SerializeException("Serialization failed");
         }
     }
@@ -64,14 +63,13 @@ public class KryoSerializer implements Serializer {
             throw new IllegalArgumentException("Cannot deserialize null or empty byte array");
         }
 
+        Class<?> clazz = null;
         try (ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(bytes);
              Input input = new Input(byteArrayInputStream)) {
-
-            // 根据 messageType 来反序列化不同的类
-            Class<?> clazz = getClassForMessageType(messageType);
-            return kryo.readObject(input, clazz); // 使用 Kryo 反序列化对象
-
+            clazz = getClassForMessageType(messageType);
+            return kryoThreadLocal.get().readObject(input, clazz);
         } catch (Exception e) {
+            log.error("Deserialization failed for messageType: {}, class: {}", messageType, clazz.getName(), e);
             throw new SerializeException("Deserialization failed");
         }
     }
@@ -92,10 +90,10 @@ public class KryoSerializer implements Serializer {
      * @throws SerializeException 如果消息类型未知
      */
     private Class<?> getClassForMessageType(int messageType) {
-        if (messageType == 1) {
-            return User.class;  // 假设我们在此反序列化成 User 类
-        } else {
-            throw new SerializeException("Unknown message type: " + messageType);
+        switch (messageType) {
+            case 0: return RpcRequest.class;
+            case 1: return RpcResponse.class;
+            default: throw new SerializeException("Unknown message type: " + messageType);
         }
     }
 

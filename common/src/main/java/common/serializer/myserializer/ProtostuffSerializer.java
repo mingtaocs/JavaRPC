@@ -2,6 +2,8 @@ package common.serializer.myserializer;
 
 import com.example.pojo.User;
 import common.exception.SerializeException;
+import common.message.RpcRequest;
+import common.message.RpcResponse;
 import io.protostuff.LinkedBuffer;
 import io.protostuff.ProtostuffIOUtil;
 import io.protostuff.Schema;
@@ -67,15 +69,15 @@ public class ProtostuffSerializer implements Serializer {
 
     // 用于根据 messageType 获取对应的类
     private Class<?> getClassForMessageType(int messageType) {
-        if (messageType == 1) {
-            return User.class;  // 假设我们在此反序列化成 User 类
-        } else {
-            throw new SerializeException("Unknown message type: " + messageType);
+        switch (messageType) {
+            case 0: return RpcRequest.class;
+            case 1: return RpcResponse.class;
+            default: throw new SerializeException("Unknown message type: " + messageType);
         }
     }
 
     @Override
     public String toString() {
-        return "Protostuff";
+        return "protostuff";
     }
 }

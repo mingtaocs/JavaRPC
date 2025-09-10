@@ -45,4 +45,27 @@ public interface Serializer {
         }
         return serializerMap.get(code); // 如果不存在，则返回 null
     }
+
+    /**
+     * 根据序列化器名称获取对应的代码
+     * @param serializerName 序列化器名称
+     * @return 序列化器代码
+     */
+    static int getSerializerCodeByName(String serializerName) {
+        if(serializerMap.isEmpty()) {
+            serializerMap.put(0, new ObjectSerializer());
+            serializerMap.put(1, new JsonSerializer());
+            serializerMap.put(2, new KryoSerializer());
+            serializerMap.put(3, new HessianSerializer());
+            serializerMap.put(4, new ProtostuffSerializer());
+        }
+
+        for (Map.Entry<Integer, Serializer> entry : serializerMap.entrySet()) {
+            if (entry.getValue().toString().equals(serializerName)) {
+                return entry.getKey();
+            }
+        }
+        throw new IllegalArgumentException("Unknown serializer: " + serializerName);
+    }
+
 }

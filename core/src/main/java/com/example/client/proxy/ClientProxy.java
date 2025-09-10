@@ -51,7 +51,6 @@ public class ClientProxy implements InvocationHandler {
         }
         //数据传输
         RpcResponse response;
-        //后续添加逻辑：为保持幂等性，只对白名单上的服务进行重试
         // 如果启用重试机制，先检查是否需要重试
         String methodSignature = getMethodSignature(request.getInterfaceName(), method);
         log.info("方法签名: " + methodSignature);
