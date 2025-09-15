@@ -1,0 +1,5 @@
+Hessian=common.serializer.myserializer.HessianSerializer
+protostuff=common.serializer.myserializer.ProtostuffSerializer
+Json=common.serializer.myserializer.JsonSerializer
+Kryo=common.serializer.myserializer.KryoSerializer
+JDK=common.serializer.myserializer.ObjectSerializer

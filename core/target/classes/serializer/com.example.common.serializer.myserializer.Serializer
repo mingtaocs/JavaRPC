@@ -1,5 +1,0 @@
-Hessian=com.example.common.serializer.myserializer.HessianSerializer
-protostuff=com.example.common.serializer.myserializer.ProtostuffSerializer
-Json=com.example.common.serializer.myserializer.JsonSerializer
-Kryo=com.example.common.serializer.myserializer.KryoSerializer
-JDK=com.example.common.serializer.myserializer.ObjectSerializer

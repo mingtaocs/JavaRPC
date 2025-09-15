@@ -31,6 +31,7 @@ public class MyEncoder extends MessageToByteEncoder {
     protected void encode(ChannelHandlerContext ctx, Object msg, ByteBuf out) throws Exception {
         log.debug("Encoding message of type: {}", msg.getClass());
         //1.写入消息类型
+        // 判断消息是否为RpcRequest类型的实例
         if (msg instanceof RpcRequest) {
             out.writeShort(MessageType.REQUEST.getCode());
         } else if (msg instanceof RpcResponse) {

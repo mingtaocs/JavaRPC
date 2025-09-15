@@ -105,8 +105,12 @@ public class ZKServiceCenter implements ServiceCenter {
 
     public void handleServiceFault(String serviceName, String faultAddress) {
         try {
+            // 1. 从本地缓存删除
             cache.delete(serviceName, faultAddress);
+            // 2. 从负载均衡器删除
             loadBalance.delNode(faultAddress);
+            // 3. 从注册中心删除
+            client.delete().forPath("/" + serviceName + "/" + faultAddress);
             log.info("服务节点故障处理完成：服务名 {}，故障节点 {}", serviceName, faultAddress);
         } catch (Exception e) {
             log.error("处理服务节点故障失败：服务名 {}，故障节点 {}", serviceName, faultAddress, e);
